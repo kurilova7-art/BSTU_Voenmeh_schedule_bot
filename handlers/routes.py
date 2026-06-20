@@ -15,6 +15,7 @@ import bot_data
 import utils.database as db
 from utils.schedule_parser import Lesson
 from utils.storage import save_user_data
+import aiohttp
 
 router = Router()
 
@@ -508,6 +509,141 @@ async def schedule_navigation(callback: CallbackQuery):
         print(f"Ошибка при обновлении сообщения: {e}")
 
 
+
+# ---------- FAQ ----------
+FAQ_ITEMS = [
+    {"question": "🕙 Расписание пар", "answer":
+        "1️⃣ 09:00 - 10:30\n"
+        "2️⃣ 10:50 - 12:20\n"
+        "3️⃣ 12:40 - 14:10\n"
+        "4️⃣ 14:55 - 16:25\n"
+        "5️⃣ 16:45 - 18:15\n"
+        "6️⃣ 18:30 - 20:00\n"
+        "7️⃣ 20:05 - 21:35"},
+    {"question": "🔗 Полезные ссылки",
+     "links": [
+         {"title": "Сайт военмеха", "url": "https://voenmeh.ru"},
+         {"title": "Расписание пар для студентов", "url": "https://voenmeh.ru/obrazovanie/timetables"},
+         {"title": "Расписание пар для преподавателей", "url": "https://voenmeh.ru/prepodavatelyam/raspisanie-prepodavatelej/"},
+         {"title": "Расписание экзаменов", "url": "https://voenmeh.ru/obrazovanie/exam/"},
+         {"title": "Расписание приема академических задолженностей", "url": "https://voenmeh.ru/obrazovanie/timetable-dolg/"},
+         {"title": "Онлайн-заявки на получение справок", "url": "https://voenmeh.ru/studentam/spravki-dlya-studentov/"},
+     ],
+     "answer": "Выберите нужный ресурс:"},
+    {"question": "Как узнать расписание?", "answer":
+        "Используй /search или /group /teacher /classroom"},
+    {"question": "Как обновляется расписание?", "answer": "Бот автоматически обновляет данные с сайта каждый час."},
+    {"question": "Общая информация о боте", "answer":
+        "🔧 Бот написан на python 3.14\n"
+        "🔧 Библиотеки: aiogram, dotenv, xml.etree.ElementTree\n"
+        "🔧 Версия 0.0.1\n"
+        "🔧 Не коммерческий проект\n"},
+]
+
+def get_faq_keyboard() -> InlineKeyboardMarkup:
+    buttons = []
+    for idx, item in enumerate(FAQ_ITEMS):
+        if not item["question"].strip():
+            continue
+        buttons.append([InlineKeyboardButton(text=item["question"], callback_data=f"faq_{idx}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@router.message(Command("faq"))
+async def cmd_faq(message: Message):
+    await message.answer(
+        "📚 Часто задаваемые вопросы\n\nВыберите вопрос:",
+        reply_markup=get_faq_keyboard()
+    )
+
+
+@router.callback_query(F.data.regexp(r'^faq_\d+$'))
+async def faq_show_answer(callback: CallbackQuery):
+    idx = int(callback.data.split("_")[1])
+    if idx >= len(FAQ_ITEMS):
+        await callback.answer("Вопрос не найден", show_alert=True)
+        return
+    item = FAQ_ITEMS[idx]
+
+
+    if "links" in item and item["links"]:
+        keyboard_buttons = []
+        for link in item["links"]:
+            keyboard_buttons.append([InlineKeyboardButton(text=link["title"], url=link["url"])])
+        keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="faq_back")])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+        text = item.get("answer", "Полезные ссылки")
+        await callback.message.edit_text(
+            f"<b>{item['question']}</b>\n\n{text}",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    else:
+        back_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="faq_back")]
+            ]
+        )
+        await callback.message.edit_text(
+            f"<b>{item['question']}</b>\n\n{item['answer']}",
+            reply_markup=back_keyboard,
+            parse_mode="HTML"
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "faq_back")
+async def faq_back(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "📚 Часто задаваемые вопросы\n\nВыберите вопрос:",
+        reply_markup=get_faq_keyboard()
+    )
+    await callback.answer()
+
+
+# ---------- Новости ----------
+async def fetch_news() -> List[Dict[str, str]]:
+    url = "https://voenmeh.ru/wp-json/wp/v2/posts?per_page=5"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    news_list = []
+                    for item in data:
+                        title = item.get('title', {}).get('rendered', 'Без названия')
+                        link = item.get('link', '#')
+                        news_list.append({"title": title, "link": link})
+                    return news_list
+                else:
+                    print(f"Ошибка при получении новостей: {response.status}")
+                    return []
+    except Exception as e:
+        print(f"Ошибка при запросе к API: {e}")
+        return []
+
+
+@router.message(Command("news"))
+async def cmd_news(message: Message):
+    news = await fetch_news()
+    if not news:
+        await message.answer("⚠️ Не удалось загрузить новости. Попробуйте позже.")
+        return
+
+    keyboard_buttons = []
+    for item in news:
+        title = item['title'][:60] + "…" if len(item['title']) > 64 else item['title']
+        keyboard_buttons.append([InlineKeyboardButton(text=title, url=item['link'])])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    await message.answer(
+        "📰 <b>Последние новости Военмеха</b>",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
 # ---------- Старт, помощь, о боте ----------
 @router.message(Command("start"))
 @router.message(F.text.lower() == "старт")
@@ -520,24 +656,12 @@ async def start(message: Message, state: FSMContext):
 async def help(message: Message):
     await message.answer(
         "<b>Список команд:</b>\n"
-        "✅ /about - о боте\n"
         "✅ /search - поиск по группе, преподавателю, аудитории\n"
         "✅ /group - поиск по группе\n"
         "✅ /teacher - поиск по преподавателю\n"
-        "✅ /classroom - поиск по аудитории",
-        parse_mode="HTML")
-
-
-@router.message(Command("about"))
-@router.message(F.text.lower() == "о боте")
-async def about(message: Message):
-    await message.answer(
-        "<b>О боте</b>\n"
-        "🔧 Бот написан на python 3.14\n"
-        "🔧 Библиотеки: aiogram, dotenv, xml.etree.ElementTree\n"
-        "🔧 Версия 0.0.1\n"
-        "🔧 Не коммерческий проект\n"
-        "🔧 <a href='https://voenmeh.ru/obrazovanie/timetables'>Ссылка на расписание с сайта</a>",
+        "✅ /classroom - поиск по аудитории\n"
+        "✅ /faq - часто задаваемые вопросы\n"
+        "✅ /news - новости вуза",
         parse_mode="HTML")
 
 

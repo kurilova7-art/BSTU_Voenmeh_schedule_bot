@@ -23,8 +23,9 @@ async def set_commands(bot: Bot):
         BotCommand(command="group", description="Поиск по группе"),
         BotCommand(command="teacher", description="Поиск по преподавателю"),
         BotCommand(command="classroom", description="Поиск по аудитории"),
+        BotCommand(command="faq", description="Часто задаваемые вопросы"),
+        BotCommand(command="news", description="Новости вуза"),
         BotCommand(command="help", description="Помощь"),
-        BotCommand(command="about", description="О боте"),
     ]
     await bot.set_my_commands(commands)
 
